@@ -1,0 +1,48 @@
+# Server directory gitignore
+
+# Build output
+/dist
+
+# Dependencies
+/node_modules
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Testing
+/coverage
+
+# IDEs and editors
+/.idea
+/.vscode
+*.swp
+*.swo
+
+# Temporary files
+.tmp/
+.temp/
+
+# Compiled binary addons (https://nodejs.org/api/addons.html)
+build/Release
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
