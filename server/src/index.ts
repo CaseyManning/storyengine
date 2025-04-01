@@ -4,7 +4,7 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import session from 'express-session';
 import dotenv from 'dotenv';
-
+import generateStory from './chooser/generate';
 // Load environment variables
 dotenv.config();
 
@@ -41,7 +41,7 @@ app.use(session({
   saveUninitialized: false,
   cookie: {
     secure: process.env.NODE_ENV === 'production',
-    maxAge: 24 * 60 * 60 * 1000 // 1 day
+    maxAge: 5 * 24 * 60 * 60 * 1000 // 5 days
   }
 }));
 
@@ -60,7 +60,7 @@ const initializeSupabase = async () => {
 };
 
 // Routes
-app.use('/api/stories', storyRoutes);
+app.use('/api/story', storyRoutes);
 app.use('/api/auth', authRoutes);
 
 // WebSocket setup
@@ -70,9 +70,9 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
   });
-  
-  // Story-related events will be handled here
 });
+
+// generateStory("A story about a grizzled detective taking a bewildering case.");
 
 // Start server
 const PORT = process.env.PORT || 3001;

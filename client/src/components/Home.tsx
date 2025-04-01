@@ -27,6 +27,12 @@ const Home: React.FC = () => {
       <div className="home-content">
         <h2>Welcome, {user?.email}!</h2>
         <p>This is the home page of the StoryEngine application.</p>
+        
+        <div className="home-actions">
+          <button onClick={() => navigate('/viewer')} className="action-button">
+            Story Visualizer
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -23,5 +23,4 @@
 
 ## Project Structure
 - React TypeScript frontend (client/)
-- Node.js + Express backend (server/) with MongoDB and OpenAI integration
-- Visual novel style UI with character portraits and dialogue windows
+- Node.js + Express backend (server/) with Supabase and OpenAI integration

@@ -69,13 +69,13 @@ StoryEngine is a comprehensive system for creating LLM-controlled narratives - a
 
 ### Stories
 
-- `POST /api/stories` - Create a new story from prompt
-- `GET /api/stories/:id` - Retrieve story state
-- `GET /api/stories/:id/characters` - Get characters for a story
-- `POST /api/stories/:storyId/characters/:characterId/dialogue` - Generate dialogue
-- `POST /api/stories/:storyId/dialogue/:dialogueId/select` - Select dialogue option
-- `POST /api/stories/:id/location` - Change player location
-- `POST /api/stories/:id/save` - Save story state
+- `POST /api/story` - Create a new story from prompt
+- `GET /api/story/:id` - Retrieve story state
+- `GET /api/story/:id/characters` - Get characters for a story
+- `POST /api/story/:storyId/characters/:characterId/dialogue` - Generate dialogue
+- `POST /api/story/:storyId/dialogue/:dialogueId/select` - Select dialogue option
+- `POST /api/story/:id/location` - Change player location
+- `POST /api/story/:id/save` - Save story state
 
 ### Authentication
 

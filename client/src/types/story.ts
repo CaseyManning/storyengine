@@ -32,11 +32,11 @@
 //     characters: TCharacter[];
 //     setting: TextData;
 //     mechanics: TextData;
-// };
+// }
 
 // interface TCompositeStoryMovement extends Lockable {
 //     children: TStoryMovement[];
-// };
+// }
 
 // type TStoryMovement = {
 //     id: string;
@@ -50,4 +50,6 @@
 //     } & TCompositeStoryMovement
 // );
 
-// export type { Story, TCharacter, TLeafStoryMovement, TCompositeStoryMovement, TStoryMovement };
+// export type { Story, TCharacter, TLeafStoryMovement, TCompositeStoryMovement, TStoryMovement, TWorldStateData, TextData };
+
+export {};
