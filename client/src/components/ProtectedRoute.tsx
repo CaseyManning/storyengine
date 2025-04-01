@@ -18,7 +18,7 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
     if (!user) {
       // Attempt to log in with test credentials - hot reload is somehow breaking the login state
       console.log("trying to log in");
-      login("", "foobar").then((response: any) => {
+      login("kcgrind@gmail.com", "foobar").then((response: any) => {
         if (!response.user) {
           return <Navigate to="/login" />;
         }
