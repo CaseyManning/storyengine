@@ -27,8 +27,8 @@ const TestGraph = () => {
 						},
 					]}
 					links={[
-						{ source: 'node-1', target: 'node-2', label: 'connects to', directional: false },
-						{ source: 'node-3', target: 'node-2', label: 'refers to', directional: false },
+						{ source: 'node-1', target: 'node-2', label: 'connects to', directional: true },
+						{ source: 'node-3', target: 'node-2', label: 'refers to', directional: true },
 					]}
 					width={window.innerWidth}
 					height={window.innerHeight}

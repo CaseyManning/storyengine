@@ -1,0 +1,20 @@
+.link-label {
+    fill: #000;
+    font-size: 12px;
+    background: #fff;
+}
+
+.default-node {
+    background: #fff;
+    border: 2px solid #999;
+    border-radius: 50%;
+    font-size: 12px;
+    text-align: center;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    aspect-ratio: 1/1;
+    user-select: none;
+    box-shadow: 0 0 10px rgba(24, 144, 255, 0.1);
+    pointer-events: none;
+}

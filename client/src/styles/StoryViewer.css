@@ -118,6 +118,7 @@
   border-radius: 8px;
   border: 2px solid #eee;
   cursor: pointer;
+  border-radius: 50%
 }
 
 .default-node:hover {

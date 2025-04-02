@@ -3,6 +3,7 @@ import * as d3Force from 'd3-force';
 import { select } from 'd3-selection';
 import { zoom } from 'd3-zoom';
 import { NodeRenderer } from './NodeRenderer';
+import '../styles/ForceGraph.css';
 
 // Add global type definitions for animation frame tracking
 declare global {
@@ -44,7 +45,7 @@ interface ForceGraphProps {
 }
 
 // Default node size constants
-const DEFAULT_NODE_WIDTH = 120;
+const DEFAULT_NODE_WIDTH = 60;
 const DEFAULT_NODE_HEIGHT = 60;
 
 // Custom hook for graph simulation
@@ -124,10 +125,11 @@ function useZoomPan(svgRef: React.RefObject<SVGSVGElement | null>) {
 	// Setup zoom behavior
 	useEffect(() => {
 		if (!svgRef.current) return;
+
 		const svg = select(svgRef.current);
 
 		const zoomBehavior = zoom()
-			.scaleExtent([0.1, 4])
+			.scaleExtent([0.1, 4]) // Min/max zoom scale
 			.on('zoom', (event) => {
 				// Cancel any pending animation frame to avoid stacking updates
 				if (window._forceGraphZoomFrame) {
@@ -141,22 +143,27 @@ function useZoomPan(svgRef: React.RefObject<SVGSVGElement | null>) {
 					k: event.transform.k,
 				};
 
-				// Apply transform directly to the g element
+				// Apply transform to the zoom-group element
+				// We select by class to ensure we're getting the right element
 				select(svgRef.current)
-					.select('g')
+					.select('.zoom-group')
 					.attr(
 						'transform',
 						`translate(${zoomRef.current.x},${zoomRef.current.y}) scale(${zoomRef.current.k})`,
 					);
 			})
-			// Filter events to only enable panning on the background, not on nodes
+			// Filter events to handle mouse interactions properly
 			.filter((event) => {
-				// Only handle zoom events from the svg background, not from nodes
+				// Handle events based on their target
 				const target = event.target as Element;
-				const isForeignObject = target.tagName === 'foreignObject' || target.closest('foreignObject') !== null;
 
-				// For wheel events (zooming), always allow
+				// Get the SVG element to check if the event occurred directly on it
+				const svg = svgRef.current;
+
+				// Allow wheel events for zooming regardless of where they occur
 				if (event.type === 'wheel') return true;
+
+				const isForeignObject = target.tagName === 'foreignObject' || target.closest('foreignObject') !== null;
 
 				// For mouse events on nodes, don't activate pan behavior
 				return !isForeignObject;
@@ -165,7 +172,6 @@ function useZoomPan(svgRef: React.RefObject<SVGSVGElement | null>) {
 		svg.call(zoomBehavior as any);
 
 		return () => {
-			// Clean up any pending animation frame
 			if (window._forceGraphZoomFrame) {
 				cancelAnimationFrame(window._forceGraphZoomFrame);
 			}
@@ -301,6 +307,16 @@ const ForceGraph: React.FC<ForceGraphProps> = ({
 		[selectedNode, onNodeClick],
 	);
 
+	// Get node dimension based on node type (circle, rectangle, etc)
+	const getNodeRadius = useCallback((node: Node, isRectangular = true) => {
+		if (isRectangular) {
+			// For rectangular nodes, we need to account for the actual direction of the link
+			return Math.max(DEFAULT_NODE_WIDTH, DEFAULT_NODE_HEIGHT) / 2;
+		}
+		// For circular nodes (if you had any)
+		return Math.max(DEFAULT_NODE_WIDTH, DEFAULT_NODE_HEIGHT) / 2;
+	}, []);
+
 	const renderedLinks = useMemo(() => {
 		return graphLinks.map((link: Link & d3Force.SimulationLinkDatum<Node>, index) => {
 			const sourceNode = link.source as Node;
@@ -310,16 +326,54 @@ const ForceGraph: React.FC<ForceGraphProps> = ({
 				return null;
 			}
 
+			// Calculate line endpoints that properly intersect with node boundaries
+			let x1 = sourceNode.x;
+			let y1 = sourceNode.y;
+			let x2 = targetNode.x;
+			let y2 = targetNode.y;
+
+			// Get the angle between nodes
+			const dx = x2 - x1;
+			const dy = y2 - y1;
+			const angle = Math.atan2(dy, dx);
+
+			// Calculate source node intersection point (if needed)
+			const sourceRadius = getNodeRadius(sourceNode);
+
+			// Calculate target node intersection point
+			const targetRadius = getNodeRadius(targetNode);
+
+			// Position the end of the line at the edge of the target node
+			x2 = targetNode.x - Math.cos(angle) * targetRadius;
+			y2 = targetNode.y - Math.sin(angle) * targetRadius;
+
+			// Position the start of the line at the edge of the source node
+			x1 = sourceNode.x + Math.cos(angle) * sourceRadius;
+			y1 = sourceNode.y + Math.sin(angle) * sourceRadius;
+
+			// Define arrowhead size and adjust line end point to accommodate it
+			const arrowLength = 10; // Should match the width used in marker definition
+
+			// For directional links, adjust the line ending to work with the V-shaped arrow
+			if (link.directional) {
+				// Keep the line ending exactly at the node boundary
+				// With a V-shaped arrow, we don't need to adjust as much since there's less overlap
+				x2 = targetNode.x - Math.cos(angle) * targetRadius;
+				y2 = targetNode.y - Math.sin(angle) * targetRadius;
+			}
+
 			return (
 				<g key={`link-${index}`}>
 					<line
-						x1={sourceNode.x}
-						y1={sourceNode.y}
-						x2={targetNode.x}
-						y2={targetNode.y}
+						x1={x1}
+						y1={y1}
+						x2={x2}
+						y2={y2}
 						stroke="#999"
 						strokeWidth={2}
 						strokeOpacity={1}
+						// Add marker-end for directional links
+						markerEnd={link.directional ? `url(#arrowhead-${index})` : undefined}
 					/>
 					{link.label && (
 						<text
@@ -327,28 +381,17 @@ const ForceGraph: React.FC<ForceGraphProps> = ({
 							y={(sourceNode.y + targetNode.y) / 2}
 							textAnchor="middle"
 							fill="#666"
+							className="link-label"
 							fontSize={10}
 							dy={-5}
 						>
 							{link.label}
 						</text>
 					)}
-					{link.directional && (
-						<marker
-							id={`arrowhead-${index}`}
-							markerWidth={10}
-							markerHeight={7}
-							refX={9}
-							refY={3.5}
-							orient="auto"
-						>
-							<polygon points="0 0, 10 3.5, 0 7" fill="#999" />
-						</marker>
-					)}
 				</g>
 			);
 		});
-	}, [graphLinks]);
+	}, [graphLinks, getNodeRadius]);
 
 	const renderedNodes = useMemo(() => {
 		return graphNodes.map((node) => {
@@ -397,9 +440,42 @@ const ForceGraph: React.FC<ForceGraphProps> = ({
 		});
 	}, [handleDragStart, handleNodeClick, isRecentMouseDown, selectedNode, graphNodes]);
 
+	// Define marker definitions for all directional links
+	const markerDefs = useMemo(() => {
+		return graphLinks
+			.filter((link: Link & d3Force.SimulationLinkDatum<Node>) => link.directional)
+			.map((link, index) => (
+				<marker
+					key={`marker-${index}`}
+					id={`arrowhead-${index}`}
+					viewBox="0 0 10 8"
+					refX="8"
+					refY="4"
+					markerWidth="10"
+					markerHeight="8"
+					orient="auto"
+				>
+					{/* Create a V shape with two lines instead of a filled polygon */}
+					<g>
+						<line x1="0" y1="0" x2="6" y2="4" stroke="#999" strokeWidth="1" />
+						<line x1="0" y1="8" x2="6" y2="4" stroke="#999" strokeWidth="1" />
+					</g>
+				</marker>
+			));
+	}, [graphLinks]);
+
+	// Set a class name on the SVG element to ensure it captures events properly
 	return (
-		<svg ref={svgRef} width={width} height={height} style={{ border: '1px solid #ddd', borderRadius: '4px' }}>
-			<g>
+		<svg
+			ref={svgRef}
+			width={width}
+			height={height}
+			style={{ border: '1px solid #ddd', borderRadius: '4px' }}
+			className="force-graph-svg"
+		>
+			<defs>{markerDefs}</defs>
+			{/* The top-level group that will be transformed by zoom */}
+			<g className="zoom-group">
 				{renderedLinks}
 				{renderedNodes}
 			</g>
