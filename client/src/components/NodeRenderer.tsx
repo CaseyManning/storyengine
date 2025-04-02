@@ -7,15 +7,14 @@ export const NodeRenderer = ({ node, selected }: NodeRendererProps) => {
 	if (typeof node === 'string') {
 		return (
 			<div
-				className={`default-node${selected ? ' selected' : ''}`}
 				style={{
 					padding: '8px 12px',
 					background: selected ? '#e6f7ff' : 'white',
-					border: `2px solid ${selected ? '#1890ff' : '#d9d9d9'}`,
+					border: `2px solid ${selected ? '#1890ff' : '#999'}`,
 					borderRadius: '6px',
 					userSelect: 'none',
-					boxShadow: selected ? '0 0 10px rgba(24, 144, 255, 0.5)' : '0 2px 8px rgba(0, 0, 0, 0.15)',
-					pointerEvents: 'none', // Let events pass through to parent
+					boxShadow: selected ? '0 0 10px rgba(24, 144, 255, 0.1)' : '0 2px 8px rgba(0, 0, 0, 0.00)',
+					pointerEvents: 'none',
 				}}
 			>
 				{node}

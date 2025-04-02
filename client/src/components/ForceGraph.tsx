@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react';
+import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import * as d3Force from 'd3-force';
 import { select } from 'd3-selection';
 import { zoom } from 'd3-zoom';
@@ -12,17 +12,20 @@ declare global {
 	}
 }
 
-export interface Node {
+export interface InputNode {
 	id: string;
 	node: React.ReactNode;
-	x?: number;
-	y?: number;
-	vx?: number;
-	vy?: number;
-	fx?: number | null;
-	fy?: number | null;
-	width?: number;
-	height?: number;
+}
+
+export interface Node extends InputNode {
+	x: number;
+	y: number;
+	vx: number;
+	vy: number;
+	fx: number | null;
+	fy: number | null;
+	width: number;
+	height: number;
 }
 
 export interface Link {
@@ -33,67 +36,32 @@ export interface Link {
 }
 
 interface ForceGraphProps {
-	nodes: Node[];
+	nodes: InputNode[];
 	links: Link[];
 	width?: number;
 	height?: number;
 	onNodeClick?: (nodeId: string) => void;
 }
 
-const ForceGraph: React.FC<ForceGraphProps> = ({ nodes, links, width = 800, height = 600, onNodeClick }) => {
-	const svgRef = useRef<SVGSVGElement>(null);
-	const nodeRefs = useRef<Map<string, HTMLDivElement>>(new Map());
-	const zoomRef = useRef<{ x: number; y: number; k: number }>({ x: 0, y: 0, k: 1 });
+// Default node size constants
+const DEFAULT_NODE_WIDTH = 120;
+const DEFAULT_NODE_HEIGHT = 60;
 
-	// We don't need transform state - using it directly is likely causing the infinite updates
-	// Moving to a ref-only approach for transform
-	const [selectedNode, setSelectedNode] = useState<string | null>(null);
+// Custom hook for graph simulation
+function useGraphSimulation(nodes: Node[], links: Link[], width: number, height: number) {
+	const [graphNodes, setGraphNodes] = useState<Node[]>([]);
+	const [graphLinks, setGraphLinks] = useState<(Link & d3Force.SimulationLinkDatum<Node>)[]>([]);
 	const [simulation, setSimulation] = useState<d3Force.Simulation<Node, d3Force.SimulationLinkDatum<Node>> | null>(
 		null,
 	);
-	const [graphNodes, setGraphNodes] = useState<Node[]>([]);
-	const [graphLinks, setGraphLinks] = useState<(Link & d3Force.SimulationLinkDatum<Node>)[]>([]);
-	const [nodeDimensions, setNodeDimensions] = useState<Map<string, { width: number; height: number }>>(new Map());
 
-	// Default node size (used as a fallback)
-	const DEFAULT_NODE_WIDTH = 120;
-	const DEFAULT_NODE_HEIGHT = 60;
-
-	// Node reference callback to measure node sizes
-	const nodeRefCallback = useCallback(
-		(node: HTMLDivElement | null, id: string) => {
-			if (node) {
-				nodeRefs.current.set(id, node);
-				// Only update dimensions if they've changed substantially
-				const rect = node.getBoundingClientRect();
-				const newWidth = Math.max(rect.width, DEFAULT_NODE_WIDTH);
-				const newHeight = Math.max(rect.height, DEFAULT_NODE_HEIGHT);
-
-				const currentDimensions = nodeDimensions.get(id);
-				if (
-					!currentDimensions ||
-					Math.abs(currentDimensions.width - newWidth) > 5 ||
-					Math.abs(currentDimensions.height - newHeight) > 5
-				) {
-					setNodeDimensions((prev) => {
-						const newMap = new Map(prev);
-						newMap.set(id, { width: newWidth, height: newHeight });
-						return newMap;
-					});
-				}
-			}
-		},
-		[nodeDimensions],
-	);
-
-	// Initialize and update the simulation when nodes or links change
+	// Process nodes and links
 	useEffect(() => {
 		// Deep copy nodes to avoid mutating props
-		const nodesCopy = nodes.map((node) => ({ ...node }));
 
 		// Convert string IDs to node references for links
 		const nodeMap = new Map<string, Node>();
-		nodesCopy.forEach((node) => {
+		nodes.forEach((node) => {
 			nodeMap.set(node.id, node);
 		});
 
@@ -103,23 +71,17 @@ const ForceGraph: React.FC<ForceGraphProps> = ({ nodes, links, width = 800, heig
 			target: nodeMap.get(link.target) || link.target,
 		}));
 
-		setGraphNodes(nodesCopy);
+		setGraphNodes(nodes);
 		setGraphLinks(linksCopy as (Link & d3Force.SimulationLinkDatum<Node>)[]);
 
 		// Create a collision force that accounts for node dimensions
 		const getNodeRadius = (node: Node) => {
-			const dimensions = nodeDimensions.get(node.id);
-			if (dimensions) {
-				// Use the larger of width/2 or height/2 as the radius for collision
-				return Math.max(dimensions.width / 2, dimensions.height / 2);
-			}
-			// Use default if dimensions not available yet
 			return Math.max(DEFAULT_NODE_WIDTH, DEFAULT_NODE_HEIGHT) / 2;
 		};
 
 		// Create the simulation
 		const sim = d3Force
-			.forceSimulation<Node>(nodesCopy)
+			.forceSimulation<Node>(nodes)
 			.force(
 				'link',
 				d3Force
@@ -138,7 +100,7 @@ const ForceGraph: React.FC<ForceGraphProps> = ({ nodes, links, width = 800, heig
 
 				// Use requestAnimationFrame to throttle state updates
 				window._forceGraphAnimationFrame = requestAnimationFrame(() => {
-					setGraphNodes([...nodesCopy]);
+					setGraphNodes([...nodes]);
 					setGraphLinks([...linksCopy] as (Link & d3Force.SimulationLinkDatum<Node>)[]);
 				});
 			});
@@ -146,10 +108,20 @@ const ForceGraph: React.FC<ForceGraphProps> = ({ nodes, links, width = 800, heig
 
 		return () => {
 			sim.stop();
+			if (window._forceGraphAnimationFrame) {
+				cancelAnimationFrame(window._forceGraphAnimationFrame);
+			}
 		};
-	}, [nodes, links, width, height, nodeDimensions]);
+	}, [nodes, links, width, height]);
 
-	// Handle zoom and pan
+	return { graphNodes, graphLinks, simulation };
+}
+
+// Custom hook for zoom and pan functionality
+function useZoomPan(svgRef: React.RefObject<SVGSVGElement | null>) {
+	const zoomRef = useRef<{ x: number; y: number; k: number }>({ x: 0, y: 0, k: 1 });
+
+	// Setup zoom behavior
 	useEffect(() => {
 		if (!svgRef.current) return;
 		const svg = select(svgRef.current);
@@ -169,7 +141,7 @@ const ForceGraph: React.FC<ForceGraphProps> = ({ nodes, links, width = 800, heig
 					k: event.transform.k,
 				};
 
-				// Apply transform directly to the g element - no React state involved
+				// Apply transform directly to the g element
 				select(svgRef.current)
 					.select('g')
 					.attr(
@@ -193,205 +165,243 @@ const ForceGraph: React.FC<ForceGraphProps> = ({ nodes, links, width = 800, heig
 		svg.call(zoomBehavior as any);
 
 		return () => {
+			// Clean up any pending animation frame
 			if (window._forceGraphZoomFrame) {
 				cancelAnimationFrame(window._forceGraphZoomFrame);
 			}
 			svg.on('.zoom', null);
 		};
+	}, [svgRef]);
+
+	return zoomRef;
+}
+
+// Custom hook for node dragging functionality
+function useNodeDrag(
+	simulation: d3Force.Simulation<Node, d3Force.SimulationLinkDatum<Node>> | null,
+	graphNodes: Node[],
+	zoomRef: React.MutableRefObject<{ x: number; y: number; k: number }>,
+) {
+	const mouseDownTimeRef = useRef<number>(0);
+
+	const handleDragStart = useCallback(
+		(event: React.MouseEvent, nodeId: string) => {
+			if (!simulation) return;
+
+			// Prevent the event from being captured by the zoom behavior
+			event.stopPropagation();
+
+			// Record time for distinguishing between clicks and drags
+			mouseDownTimeRef.current = Date.now();
+
+			const node = graphNodes.find((n) => n.id === nodeId);
+			if (!node) return;
+
+			// Heat up the simulation when dragging starts
+			simulation.alphaTarget(0.3).restart();
+
+			// Store initial node position for correct drag calculation
+			const initialNodeX = node.x!;
+			const initialNodeY = node.y!;
+
+			// Set fixed position to prevent node from moving with simulation
+			node.fx = initialNodeX;
+			node.fy = initialNodeY;
+
+			// Store initial mouse position
+			const startX = event.clientX;
+			const startY = event.clientY;
+
+			const handleDrag = (moveEvent: MouseEvent) => {
+				// Prevent default browser behavior
+				moveEvent.preventDefault();
+				// Stop propagation to prevent zoom/pan
+				moveEvent.stopPropagation();
+
+				// Calculate mouse displacement, adjusted for zoom scale using the ref
+				const dx = (moveEvent.clientX - startX) / zoomRef.current.k;
+				const dy = (moveEvent.clientY - startY) / zoomRef.current.k;
+
+				// Update node's fixed position based on initial position plus displacement
+				node.fx = initialNodeX + dx;
+				node.fy = initialNodeY + dy;
+
+				// Update the simulation
+				simulation.alpha(0.3).restart();
+			};
+
+			const handleDragEnd = () => {
+				// Clean up event listeners
+				document.removeEventListener('mousemove', handleDrag);
+				document.removeEventListener('mouseup', handleDragEnd);
+
+				// Let the simulation cool down
+				simulation.alphaTarget(0);
+
+				// Optional: Unfix position when drag ends to allow node to move with simulation
+				node.fx = null;
+				node.fy = null;
+			};
+
+			// Add global event listeners to handle drag movement and release
+			document.addEventListener('mousemove', handleDrag);
+			document.addEventListener('mouseup', handleDragEnd);
+		},
+		[graphNodes, simulation, zoomRef],
+	);
+
+	const isRecentMouseDown = useCallback(() => {
+		// Consider it a click if less than 200ms passed between mousedown and mouseup
+		return Date.now() - mouseDownTimeRef.current < 200;
 	}, []);
 
-	// Handle node dragging
-	const handleDragStart = (event: React.MouseEvent, nodeId: string) => {
-		if (!simulation) return;
+	return { handleDragStart, isRecentMouseDown };
+}
 
-		// Prevent the event from being captured by the zoom behavior
-		event.stopPropagation();
+// Main ForceGraph component
+const ForceGraph: React.FC<ForceGraphProps> = ({
+	nodes: inputNodes,
+	links,
+	width = 800,
+	height = 600,
+	onNodeClick,
+}) => {
+	const svgRef = useRef<SVGSVGElement>(null);
+	const [selectedNode, setSelectedNode] = useState<string | null>(null);
 
-		const node = graphNodes.find((n) => n.id === nodeId);
-		if (!node) return;
+	const nodes: Node[] = useMemo(
+		() =>
+			inputNodes.map((node) => ({
+				...node,
+				x: 0,
+				y: 0,
+				vx: 0,
+				vy: 0,
+				fx: null,
+				fy: null,
+				width: DEFAULT_NODE_WIDTH,
+				height: DEFAULT_NODE_HEIGHT,
+			})),
+		[inputNodes],
+	);
 
-		// Heat up the simulation when dragging starts
-		simulation.alphaTarget(0.3).restart();
+	// Use custom hooks
+	const { graphNodes, graphLinks, simulation } = useGraphSimulation(nodes, links, width, height);
+	const zoomRef = useZoomPan(svgRef);
+	const { handleDragStart, isRecentMouseDown } = useNodeDrag(simulation, graphNodes, zoomRef);
 
-		// Store initial node position for correct drag calculation
-		const initialNodeX = node.x!;
-		const initialNodeY = node.y!;
+	// Node click handler
+	const handleNodeClick = useCallback(
+		(nodeId: string) => {
+			setSelectedNode(nodeId === selectedNode ? null : nodeId);
+			if (onNodeClick) {
+				onNodeClick(nodeId);
+			}
+		},
+		[selectedNode, onNodeClick],
+	);
 
-		// Set fixed position to prevent node from moving with simulation
-		node.fx = initialNodeX;
-		node.fy = initialNodeY;
+	const renderedLinks = useMemo(() => {
+		return graphLinks.map((link: Link & d3Force.SimulationLinkDatum<Node>, index) => {
+			const sourceNode = link.source as Node;
+			const targetNode = link.target as Node;
 
-		// Store initial mouse position
-		const startX = event.clientX;
-		const startY = event.clientY;
+			if (!sourceNode || !targetNode) {
+				return null;
+			}
 
-		const handleDrag = (moveEvent: MouseEvent) => {
-			// Prevent default browser behavior
-			moveEvent.preventDefault();
-			// Stop propagation to prevent zoom/pan
-			moveEvent.stopPropagation();
+			return (
+				<g key={`link-${index}`}>
+					<line
+						x1={sourceNode.x}
+						y1={sourceNode.y}
+						x2={targetNode.x}
+						y2={targetNode.y}
+						stroke="#999"
+						strokeWidth={2}
+						strokeOpacity={1}
+					/>
+					{link.label && (
+						<text
+							x={(sourceNode.x + targetNode.x) / 2}
+							y={(sourceNode.y + targetNode.y) / 2}
+							textAnchor="middle"
+							fill="#666"
+							fontSize={10}
+							dy={-5}
+						>
+							{link.label}
+						</text>
+					)}
+					{link.directional && (
+						<marker
+							id={`arrowhead-${index}`}
+							markerWidth={10}
+							markerHeight={7}
+							refX={9}
+							refY={3.5}
+							orient="auto"
+						>
+							<polygon points="0 0, 10 3.5, 0 7" fill="#999" />
+						</marker>
+					)}
+				</g>
+			);
+		});
+	}, [graphLinks]);
 
-			// Calculate mouse displacement, adjusted for zoom scale using the ref
-			const dx = (moveEvent.clientX - startX) / zoomRef.current.k;
-			const dy = (moveEvent.clientY - startY) / zoomRef.current.k;
+	const renderedNodes = useMemo(() => {
+		return graphNodes.map((node) => {
+			if (!node.x || !node.y) return null;
 
-			// Update node's fixed position based on initial position plus displacement
-			node.fx = initialNodeX + dx;
-			node.fy = initialNodeY + dy;
+			const halfWidth = DEFAULT_NODE_WIDTH / 2;
+			const halfHeight = DEFAULT_NODE_HEIGHT / 2;
 
-			// Update the simulation
-			simulation.alpha(0.3).restart();
-		};
-
-		const handleDragEnd = (endEvent: MouseEvent) => {
-			// Clean up event listeners
-			document.removeEventListener('mousemove', handleDrag);
-			document.removeEventListener('mouseup', handleDragEnd);
-
-			// Let the simulation cool down
-			simulation.alphaTarget(0);
-
-			// Optional: Unfix position when drag ends to allow node to move with simulation
-			node.fx = null;
-			node.fy = null;
-		};
-
-		// Add global event listeners to handle drag movement and release
-		document.addEventListener('mousemove', handleDrag);
-		document.addEventListener('mouseup', handleDragEnd);
-	};
-
-	const handleNodeClick = (nodeId: string) => {
-		setSelectedNode(nodeId === selectedNode ? null : nodeId);
-		if (onNodeClick) {
-			onNodeClick(nodeId);
-		}
-	};
-
-	// Calculate dimensions for each node based on content
-	const getNodeDimension = (nodeId: string) => {
-		const dimensions = nodeDimensions.get(nodeId);
-		if (dimensions) {
-			return dimensions;
-		}
-		return { width: DEFAULT_NODE_WIDTH, height: DEFAULT_NODE_HEIGHT };
-	};
-
-	const mouseDownTimeRef = useRef<number>(0);
+			return (
+				<foreignObject
+					key={node.id}
+					x={node.x - halfWidth}
+					y={node.y - halfHeight}
+					width={DEFAULT_NODE_WIDTH}
+					height={DEFAULT_NODE_HEIGHT}
+					style={{
+						overflow: 'visible',
+						cursor: 'grab',
+					}}
+					onMouseDown={(e) => {
+						e.stopPropagation();
+						handleDragStart(e, node.id);
+					}}
+					onClick={(e) => {
+						e.stopPropagation();
+						if (isRecentMouseDown()) {
+							handleNodeClick(node.id);
+						}
+					}}
+					pointerEvents="all"
+				>
+					<div
+						style={{
+							width: '100%',
+							height: '100%',
+							display: 'flex',
+							justifyContent: 'center',
+							alignItems: 'center',
+							pointerEvents: 'none', // Let events pass through to the foreignObject
+						}}
+					>
+						<NodeRenderer node={node.node} selected={node.id === selectedNode} />
+					</div>
+				</foreignObject>
+			);
+		});
+	}, [handleDragStart, handleNodeClick, isRecentMouseDown, selectedNode, graphNodes]);
 
 	return (
 		<svg ref={svgRef} width={width} height={height} style={{ border: '1px solid #ddd', borderRadius: '4px' }}>
 			<g>
-				{/* Links */}
-				{graphLinks.map((link, index) => {
-					const sourceNode =
-						typeof link.source === 'object' ? link.source : graphNodes.find((n) => n.id === link.source);
-					const targetNode =
-						typeof link.target === 'object' ? link.target : graphNodes.find((n) => n.id === link.target);
-
-					if (
-						!sourceNode ||
-						!targetNode ||
-						!sourceNode.x ||
-						!sourceNode.y ||
-						!targetNode.x ||
-						!targetNode.y
-					) {
-						return null;
-					}
-
-					return (
-						<g key={`link-${index}`}>
-							<line
-								x1={sourceNode.x}
-								y1={sourceNode.y}
-								x2={targetNode.x}
-								y2={targetNode.y}
-								stroke="#999"
-								strokeWidth={1.5}
-								strokeOpacity={0.6}
-							/>
-							{link.label && (
-								<text
-									x={(sourceNode.x + targetNode.x) / 2}
-									y={(sourceNode.y + targetNode.y) / 2}
-									textAnchor="middle"
-									fill="#666"
-									fontSize={10}
-									dy={-5}
-								>
-									{link.label}
-								</text>
-							)}
-							{link.directional && (
-								<marker
-									id={`arrowhead-${index}`}
-									markerWidth={10}
-									markerHeight={7}
-									refX={9}
-									refY={3.5}
-									orient="auto"
-								>
-									<polygon points="0 0, 10 3.5, 0 7" fill="#999" />
-								</marker>
-							)}
-						</g>
-					);
-				})}
-
-				{/* Nodes */}
-				{graphNodes.map((node) => {
-					if (!node.x || !node.y) return null;
-
-					const { width, height } = getNodeDimension(node.id);
-					const halfWidth = width / 2;
-					const halfHeight = height / 2;
-
-					return (
-						<foreignObject
-							key={node.id}
-							x={node.x - halfWidth}
-							y={node.y - halfHeight}
-							width={width}
-							height={height}
-							style={{
-								overflow: 'visible',
-								cursor: 'grab',
-							}}
-							onMouseDown={(e) => {
-								e.stopPropagation();
-								handleDragStart(e, node.id);
-								mouseDownTimeRef.current = Date.now();
-							}}
-							onClick={(e) => {
-								e.stopPropagation();
-								if (Date.now() - mouseDownTimeRef.current < 200) {
-									handleNodeClick(node.id);
-								}
-							}}
-							// Prevent panning when interacting with nodes
-							pointerEvents="all"
-						>
-							<div
-								ref={(el) => {
-									if (el) {
-										nodeRefCallback(el, node.id);
-									}
-								}}
-								style={{
-									width: '100%',
-									height: '100%',
-									display: 'flex',
-									justifyContent: 'center',
-									alignItems: 'center',
-									pointerEvents: 'none', // Let events pass through to the foreignObject
-								}}
-							>
-								<NodeRenderer node={node.node} selected={node.id === selectedNode} />
-							</div>
-						</foreignObject>
-					);
-				})}
+				{renderedLinks}
+				{renderedNodes}
 			</g>
 		</svg>
 	);
