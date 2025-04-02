@@ -1,60 +1,69 @@
 interface TextData {
-    content: string;
-    reducedContent: string;
-    generatingContext: string;
+	content: string;
+	reducedContent: string;
+	generatingContext: string;
 }
 
 type TWorldObject = TCharacter | TWorldStateData;
 
-interface Lockable {
-    locked: boolean;
-}
-
-interface TWorldStateData extends Lockable {
-    id: string;
-    name: string;
-    content: TextData;
-    dependencies: TWorldObject[];
+interface TWorldStateData {
+	id: string;
+	name: string;
+	content: TextData;
+	dependencies: TWorldObject[];
 }
 
 interface Story {
-    cast: TCharacter[];
-    world: TWorldStateData[];
-    movement: TStoryMovement;
+	cast: TCharacter[];
+	world: TWorldStateData[];
+	movement: TStoryMovement;
 }
 
-interface TCharacterRelation {
-    target: TCharacter;
-    description: string;
+interface TCharacterRelation extends TRelation<TCharacter> {
+	type: 'character';
 }
 
-interface TCharacter extends Lockable {
-    id: string;
-    name: string;
-    biography: TextData;
-    relations: TCharacterRelation[];
+interface TRelation<T extends TWorldObject> {
+	source: T;
+	target: T;
+	description: string;
 }
 
-interface TLeafStoryMovement extends Lockable {
-    characters: TCharacter[];
-    setting: TextData;
-    mechanics: TextData;
-};
+interface TCharacter {
+	id: string;
+	name: string;
+	biography: TextData;
+	relations: TCharacterRelation[];
+}
 
-interface TCompositeStoryMovement extends Lockable {
-    children: TStoryMovement[];
-};
+interface TLeafStoryMovement {
+	characters: TCharacter[];
+	setting: TextData;
+	mechanics: TextData;
+}
+
+interface TCompositeStoryMovement {
+	children: TStoryMovement[];
+}
 
 type TStoryMovement = {
-    id: string;
-    content: TextData;
+	id: string;
+	content: TextData;
 } & (
-    | {
-        type: 'leaf';
-    } & TLeafStoryMovement
-    | {
-        type: 'composite';
-    } & TCompositeStoryMovement
+	| ({
+			type: 'leaf';
+	  } & TLeafStoryMovement)
+	| ({
+			type: 'composite';
+	  } & TCompositeStoryMovement)
 );
 
-export type { Story, TCharacter, TLeafStoryMovement, TCompositeStoryMovement, TStoryMovement, TWorldStateData, TWorldObject };
+export type {
+	Story,
+	TCharacter,
+	TLeafStoryMovement,
+	TCompositeStoryMovement,
+	TStoryMovement,
+	TWorldStateData,
+	TWorldObject,
+};

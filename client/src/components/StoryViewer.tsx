@@ -1,113 +1,97 @@
-import { useState } from 'react';
-import api from '../services/api';
+import React, { useEffect, useState } from 'react';
+import ForceGraphSpace, { FGItem } from './ForceGraphSpace';
 import '../styles/StoryViewer.css';
-import type { TStoryMovement, TCharacter } from '../../../shared/types/story';
-import StorySubmission from './StorySubmission';
-import StoryLoading from './StoryLoading';
-import StoryVisualizer from './StoryVisualizer';
-
-// Create story service to handle API calls
-const storyService = {
-  uploadStory: async (storyText: string) => {
-    const response = await api.post('/story/upload', { storyText });
-    return response.data;
-  },
-  checkStoryStatus: async (storyId: string) => {
-    const response = await api.get(`/story/status/${storyId}`);
-    return response.data;
-  }
-};
-
-export interface StoryData {
-  cast: TCharacter[];
-  movement: TStoryMovement;
-}
-
-type StoryState = 'submission' | 'loading' | 'visualization';
+import { Story } from '../../../shared/types/story';
+import { TStoryMovement } from '../../../shared/types/story';
+import { useNavigate, useParams } from 'react-router-dom';
+import { parseSBStory } from '../story/utils';
+import { storyService } from '../services/api';
 
 const StoryViewer = () => {
-  const [storyText, setStoryText] = useState('the little lamb jumped over the fence.');
-  const [storyData, setStoryData] = useState<StoryData | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [currentStoryId, setCurrentStoryId] = useState<string | null>(null);
-  const [isParsed, setIsParsed] = useState(false);
-  const [storyState, setStoryState] = useState<StoryState>('submission');
-  
-  const checkStoryStatus = async (storyId: string) => {
-    try {
-      const response = await storyService.checkStoryStatus(storyId);
-      if (response.success && response.data.parsed) {
-        // Story has been parsed
-        setIsParsed(true);
-        setStoryState('visualization');
-        
-        // TODO: Fetch the full story data here
-        // For now, we'll just update the UI to show it's been parsed
-      }
-    } catch (err) {
-      console.error('Error checking story status:', err);
-      setStoryState('submission');
-      setError('Error checking story status');
-    }
-  };
+	// Convert story data to graph nodes
 
-  const handleUpload = async (text: string) => {
-    if (!text.trim()) {
-      setError('Please enter story text');
-      return;
-    }
+	const { storyId: storyIdParam } = useParams();
+	const navigate = useNavigate();
 
-    setStoryState('loading');
-    setError(null);
-    setIsParsed(false);
-    
-    try {
-      const data = await storyService.uploadStory(text);
-      const storyId = data.storyId;
-      
-      if (storyId) {
-        setCurrentStoryId(storyId);
+	if (!storyIdParam) {
+		navigate('/');
+	}
 
-        var checkStatus = () => {
-          if(!isParsed) {
-            checkStoryStatus(storyId);
-            window.setTimeout(checkStatus, 1000);
-          }
-        }
-        window.setTimeout(checkStatus, 1000);
-      }
-    } catch (err: any) {
-      setError(err.message);
-      console.error(err);
-      setStoryState('submission');
-    }
-  };
+	const storyId = storyIdParam as string;
 
-  const renderContent = () => {
-    switch (storyState) {
-      case 'submission':
-        return (
-          <StorySubmission
-            storyText={storyText}
-            setStoryText={setStoryText}
-            onSubmit={() => handleUpload(storyText)}
-            error={error}
-          />
-        );
-      case 'loading':
-        return <StoryLoading isParsed={isParsed} />;
-      case 'visualization':
-        return storyData ? <StoryVisualizer storyData={storyData} /> : <p>story parsed!</p>;
-      default:
-        return null;
-    }
-  };
+	const [storyData, setStoryData] = useState<Story | null>(null);
 
-  return (
-    <div className="story-viewer">
-      {renderContent()}
-    </div>
-  );
+	useEffect(() => {
+		const fetchStoryData = async () => {
+			const data = await storyService.getStory(storyId);
+			console.log('data: ', data);
+			const story = parseSBStory(data.story, data.objects);
+			setStoryData(story);
+		};
+
+		fetchStoryData();
+	}, [storyId]);
+
+	const createGraphNodes = (): FGItem[] => {
+		if (!storyData) return [];
+
+		const nodes: FGItem[] = [];
+
+		// Add characters
+		storyData.cast.forEach((character) => {
+			nodes.push({
+				id: character.id,
+				node: (
+					<div className="graph-node character-node">
+						<h3>{character.id}</h3>
+						<p>{character.biography.reducedContent}</p>
+					</div>
+				),
+			});
+		});
+
+		// Add story movements (recursive function)
+		const addMovements = (movement: TStoryMovement, parentId?: string) => {
+			const nodeLinks = [];
+			if (parentId) nodeLinks.push(parentId);
+
+			// Add links to characters for leaf nodes
+			if (movement.type === 'leaf') {
+				movement.characters.forEach((char) => {
+					nodeLinks.push(char.id);
+				});
+			}
+
+			nodes.push({
+				id: movement.id,
+				node: (
+					<div className="graph-node movement-node">
+						<h3>{movement.id}</h3>
+						<p>{movement.content.reducedContent}</p>
+					</div>
+				),
+			});
+
+			// Process children for composite nodes
+			if (movement.type === 'composite') {
+				movement.children.forEach((child) => {
+					addMovements(child, movement.id);
+				});
+			}
+		};
+
+		addMovements(storyData.movement);
+
+		return nodes;
+	};
+
+	return (
+		<div className="viewer">
+			<div className="force-graph-container">
+				<ForceGraphSpace nodes={createGraphNodes()} links={[]} selectedNode={null} />
+			</div>
+		</div>
+	);
 };
 
 export default StoryViewer;

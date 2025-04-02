@@ -176,12 +176,13 @@ flowchart TB
 ### API Endpoints
 
 #### Story Management
-- `POST /api/stories` - Create a new story from prompt
-- `GET /api/stories/:id` - Retrieve story state
-- `POST /api/stories/:id/dialogue` - Get character dialogue and options
-- `POST /api/stories/:id/select-option` - Select dialogue option
-- `POST /api/stories/:id/change-location` - Change player location
-- `POST /api/stories/:id/select-character` - Select character to interact with
+- `POST /api/story` - Create a new story from prompt
+- `POST /api/story/upload` - Upload a story from a file
+- `GET /api/story/:id` - Retrieve story state
+- `POST /api/story/:id/dialogue` - Get character dialogue and options
+- `POST /api/story/:id/select-option` - Select dialogue option
+- `POST /api/story/:id/change-location` - Change player location
+- `POST /api/story/:id/select-character` - Select character to interact with
 
 #### Session Management
 - `POST /api/auth/register` - Register new user
@@ -190,9 +191,9 @@ flowchart TB
 - `GET /api/auth/session` - Check session status
 
 #### Save/Load
-- `POST /api/stories/:id/save` - Save story state
-- `GET /api/stories/saved` - Get list of saved stories
-- `GET /api/stories/saved/:id` - Load saved story
+- `POST /api/story/:id/save` - Save story state
+- `GET /api/story/saved` - Get list of saved stories
+- `GET /api/story/saved/:id` - Load saved story
 
 ### WebSocket Events
 

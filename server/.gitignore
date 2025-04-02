@@ -46,3 +46,5 @@ build/Release
 
 # Optional eslint cache
 .eslintcache
+
+.prettierrc

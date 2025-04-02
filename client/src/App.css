@@ -1,16 +1,16 @@
 .App {
   text-align: center;
+  height: 100%;
+}
+html, body, #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
 }
 
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
-  }
+.viewer {
+    height: 100%;
+    background-color: #222;
 }
 
 .App-header {
