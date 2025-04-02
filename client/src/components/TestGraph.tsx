@@ -1,5 +1,5 @@
 import React from 'react';
-import EditableGraph from './EditableGraph';
+import ForceGraph from './ForceGraph';
 
 const TestGraph = () => {
 	return (
@@ -11,8 +11,8 @@ const TestGraph = () => {
 			}}
 		>
 			<div style={{ flex: 1 }}>
-				<EditableGraph
-					initialNodes={[
+				<ForceGraph
+					nodes={[
 						{
 							id: 'node-1',
 							node: 'First Node',
@@ -26,13 +26,12 @@ const TestGraph = () => {
 							node: 'Third Node',
 						},
 					]}
-					initialLinks={[
+					links={[
 						{ source: 'node-1', target: 'node-2', label: 'connects to', directional: false },
 						{ source: 'node-3', target: 'node-2', label: 'refers to', directional: false },
 					]}
-					onGraphChange={(nodes) => {
-						console.log('Graph updated:', nodes);
-					}}
+					width={window.innerWidth}
+					height={window.innerHeight}
 				/>
 			</div>
 		</div>
