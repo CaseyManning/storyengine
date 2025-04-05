@@ -1,5 +1,3 @@
-import type { TStoryMovement } from "../../../shared/types/story";
+import type { TMovement } from '../../../shared/types/story';
 
-function propagate(t: TStoryMovement, diff: string) {
-
-}
+function propagate(t: TMovement, diff: string) {}

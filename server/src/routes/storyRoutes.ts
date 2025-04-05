@@ -1,21 +1,20 @@
 import express from 'express';
 import { isAuthenticated } from '../middleware/auth';
-import { parseStory } from '../parser/parse';
-import supabase from '../utils/supabase';
+import { getUserStories, fetchStory, updateStoryProgress, deleteStory, saveCompleteStory } from '../utils/supabase';
+import { generateStory, generateNextNode } from '../solver/generate';
 
 const router = express.Router();
 
-// Get all stories for the current user
+// Get all stories for the authenticated user
 router.get('/', isAuthenticated, async (req, res) => {
 	try {
-		const { data, error } = await supabase.from('parsedStories').select('*').eq('user_id', req.user.id);
-
-		if (error) throw error;
+		// Get stories with metadata
+		const stories = await getUserStories(req.user.id);
 
 		res.status(200).json({
 			success: true,
 			message: 'Stories retrieved successfully',
-			data: data || [],
+			data: stories,
 		});
 	} catch (error) {
 		console.error('Error fetching stories:', error);
@@ -27,151 +26,110 @@ router.get('/', isAuthenticated, async (req, res) => {
 	}
 });
 
-// Upload new story
-router.post('/upload', isAuthenticated, async (req, res) => {
+// Create a new story
+router.post('/new', isAuthenticated, async (req, res) => {
 	try {
-		const { storyText: story } = req.body;
+		const { storyPrompt } = req.body;
 
-		if (!story) {
-			return res.status(400).json({
-				success: false,
-				message: 'Story content is required',
-			});
-		}
+		// Generate new story
+		const story = await generateStory(storyPrompt);
 
-		// 1. Insert the raw story into the parsedStories table
-		const { data, error: storyInsertError } = await supabase
-			.from('stories')
-			.insert({
-				user_id: req.user.id,
-				text: story,
-			})
-			.select();
+		// Save the story to the database
+		const id = await saveCompleteStory(story, req.user.id);
 
-		if (storyInsertError) {
-			console.error('Error inserting story:', storyInsertError);
-		}
-		console.log('storyInsertData', data);
-
-		if (!data || data.length === 0) {
-			return res.status(400).json({
-				success: false,
-				message: 'Failed to insert story',
-			});
-		}
-
-		const { id: storyId } = data[0];
-
-		res.status(200).json({
+		res.status(201).json({
 			success: true,
-			storyId,
+			message: 'New story created successfully',
+			data: {
+				id,
+				story,
+			},
 		});
-
-		const parsedStoryData = await parseStory(story);
-
-		if (parsedStoryData.cast && parsedStoryData.cast.length > 0) {
-			const characterObjects = parsedStoryData.cast.map((character) => ({
-				story_id: storyId,
-				type: 'character',
-				data: character,
-			}));
-
-			console.log('characterObjects', characterObjects);
-
-			const { error: charactersInsertError } = await supabase.from('storyObjects').insert(characterObjects);
-
-			if (charactersInsertError) throw charactersInsertError;
-
-			const { error: updateError } = await supabase
-				.from('stories')
-				.update({
-					parsed: true,
-				})
-				.eq('id', storyId);
-
-			if (updateError) throw updateError;
-		}
 	} catch (error) {
-		console.error('Error processing story upload:', error);
+		console.error('Error creating new story:', error);
 		res.status(500).json({
 			success: false,
-			message: 'Failed to process story',
+			message: 'Failed to create new story',
 			error: error instanceof Error ? error.message : String(error),
 		});
 	}
 });
 
-router.get('/status/:id', isAuthenticated, async (req, res) => {
+// Get a specific story by ID
+router.get('/:storyId', isAuthenticated, async (req, res) => {
 	try {
-		const { id } = req.params;
+		const { storyId } = req.params;
 
-		const { data, error } = await supabase.from('stories').select('id,parsed').eq('id', id).single();
-
-		if (error) throw error;
-
-		let { parsed } = data;
-		``;
-
-		res.status(200).json({
-			success: true,
-			data: {
-				parsed,
-			},
-		});
-	} catch (error) {
-		console.error('Error fetching story status:', error);
-	}
-});
-
-// Get story by ID
-router.get('/:id', isAuthenticated, async (req, res) => {
-	try {
-		const id = req.params.id;
-
-		console.log(req.params);
-
-		// Get the story from parsedStories
-		const { data: storyData, error: storyError } = await supabase
-			.from('stories')
-			.select('*')
-			.eq('id', id)
-			// .eq('user_id', req.user.id)
-			.single();
-
-		if (storyError) throw storyError;
-		if (!storyData) {
-			return res.status(404).json({
-				success: false,
-				message: 'Story not found',
-			});
-		}
-
-		// Get the story objects (characters, etc.)
-		const { data: storyObjects, error: objectsError } = await supabase
-			.from('storyObjects')
-			.select('*')
-			.eq('story_id', id);
-
-		if (objectsError) throw objectsError;
-
-		// Organize story objects by type
-		const organized = {
-			characters: storyObjects?.filter((obj) => obj.type === 'character').map((obj) => obj.data) || [],
-		};
+		// Get the story data, including user progress
+		const storyData = await fetchStory(storyId, req.user.id);
 
 		res.status(200).json({
 			success: true,
 			message: 'Story retrieved successfully',
-			data: {
-				story: storyData,
-				objects: organized,
-			},
+			data: storyData,
 		});
 	} catch (error) {
 		console.error('Error fetching story:', error);
 		res.status(500).json({
 			success: false,
 			message: 'Failed to fetch story',
+			error: error instanceof Error ? error.message : String(error),
+		});
+	}
+});
+
+// Make a choice in a story (REST API backup for the WebSocket approach)
+router.post('/:storyId/choice/:choiceId', isAuthenticated, async (req, res) => {
+	try {
+		const { storyId, choiceId } = req.params;
+
+		// Get the current story data, with user progress
+		const currentStory = await fetchStory(storyId, req.user.id);
+
+		// Generate next node based on the choice
+		const updatedStory = await generateNextNode(currentStory, choiceId);
+
+		// Find the choice to get the next node ID
+		const selectedChoice = updatedStory.choices.find((c) => c.id === choiceId);
+		if (!selectedChoice) {
+			throw new Error(`Choice ${choiceId} not found in story`);
+		}
+
+		// Update user progress
+		await updateStoryProgress(storyId, req.user.id, selectedChoice.nextNodeId);
+
+		res.status(200).json({
+			success: true,
+			message: 'Choice processed successfully',
+			data: updatedStory,
+		});
+	} catch (error) {
+		console.error('Error processing choice:', error);
+		res.status(500).json({
+			success: false,
+			message: 'Failed to process choice',
+			error: error instanceof Error ? error.message : String(error),
+		});
+	}
+});
+
+// Delete a story
+router.delete('/:storyId', isAuthenticated, async (req, res) => {
+	try {
+		const { storyId } = req.params;
+
+		// Delete the story and all related data
+		await deleteStory(storyId, req.user.id);
+
+		res.status(200).json({
+			success: true,
+			message: 'Story deleted successfully',
+		});
+	} catch (error) {
+		console.error('Error deleting story:', error);
+		res.status(500).json({
+			success: false,
+			message: 'Failed to delete story',
 			error: error instanceof Error ? error.message : String(error),
 		});
 	}

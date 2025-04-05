@@ -1,22 +1,8 @@
 import { z } from 'zod';
 import { generate_structured } from '../utils/oai';
-import { TCharacter, Story, TWorldObject } from '../../../shared/types/story';
+import { TCharacter, TStory, TWorldObject, TStateNode, TMovement } from '../../../shared/types/story';
 import { v4 as uuidv4 } from 'uuid';
 import { availableMemory } from 'process';
-
-// Zod schema for character parsing response
-const CharacterSchema = z.object({
-	characters: z.array(
-		z.object({
-			name: z.string(),
-			description: z.string(),
-			traits: z.array(z.string()).optional(),
-			role: z.string().optional(),
-		}),
-	),
-});
-
-type CharacterParseResult = z.infer<typeof CharacterSchema>;
 
 /**
  * Parses a story text to extract characters
@@ -44,7 +30,6 @@ export async function parseCharacters(storyChunks: ChunkedStory): Promise<TChara
     `;
 
 		try {
-			// Custom schema for the OpenAI response
 			const characterSchema = z.object({
 				characters: z.array(
 					z.object({
@@ -56,12 +41,9 @@ export async function parseCharacters(storyChunks: ChunkedStory): Promise<TChara
 				),
 			});
 
-			// Call OpenAI to parse the characters
 			const result = await generate_structured(prompt, characterSchema);
 
-			// Convert the result to TCharacter objects
-			const chunkCharacters = result.characters.map((char: any): Omit<TCharacter, 'id'> => {
-				// Combine description, traits and role into a cohesive biography
+			const chunkCharacters = result.characters.map((char: any): TCharacter => {
 				const traitsText = char.traits?.length > 0 ? `\nKey traits: ${char.traits.join(', ')}.` : '';
 
 				const roleText = char.role ? `\nRole: ${char.role}.` : '';
@@ -69,13 +51,10 @@ export async function parseCharacters(storyChunks: ChunkedStory): Promise<TChara
 				const biographyContent = `${char.description} ${traitsText} ${roleText}`;
 
 				return {
+					id: uuidv4(),
 					name: char.name,
 					relations: [],
-					biography: {
-						content: biographyContent,
-						reducedContent: char.description,
-						generatingContext: chunk.substring(0, 500), // First 500 chars as context
-					},
+					biography: biographyContent,
 				};
 			});
 
@@ -125,12 +104,10 @@ async function deduplicateObjects<T extends TWorldObject>(existing: T[], newObje
 		isDuplicate: z.boolean(),
 	});
 
-	const existingList = existing.map((obj) => obj.name).join(', ');
-
 	for (const newObject of newObjects) {
-		const prompt = `We have the following list of current objects in our story: ${JSON.stringify(existing)}.
-    We are adding a new object to the story: ${JSON.stringify(newObject)}.
-    Please check if this object is a close duplicate of any of the existing objects (i.e. referring to the same thing without necessarily being worded exactly the same).`;
+		const prompt = `We have the following list of current objects or characters in our story: ${JSON.stringify(existing)}.
+    We are adding a new object or character to the story: ${JSON.stringify(newObject)}.
+    Please check if this object or character is a close duplicate of any of the existing ones (i.e. referring to the same thing without necessarily being worded exactly the same).`;
 
 		try {
 			const result = (await generate_structured(prompt, duplicateSchema)) as { isDuplicate: boolean };
@@ -138,7 +115,6 @@ async function deduplicateObjects<T extends TWorldObject>(existing: T[], newObje
 				deduplicatedObjects.push(newObject);
 			}
 		} catch (error) {
-			console.error('Error checking for duplicate objects:', error);
 			throw new Error(
 				`Failed to check for duplicates: ${error instanceof Error ? error.message : String(error)}`,
 			);
@@ -149,16 +125,142 @@ async function deduplicateObjects<T extends TWorldObject>(existing: T[], newObje
 }
 
 /**
- * Parses a story text to extract characters and returns a partial Story object
+ * Extracts story states and movements from text using an iterative approach
  * @param storyText The story text to parse
- * @returns A partial Story object with the cast populated
+ * @param characters Known characters in the story
+ * @returns Arrays of state nodes and movements
  */
-export async function parseStory(storyText: string): Promise<Partial<Story>> {
+export async function parseStatesAndMovements(
+	storyText: string,
+	characters: TCharacter[],
+): Promise<{ states: TStateNode[]; movements: TMovement[] }> {
+	if (!storyText || storyText.trim().length === 0) {
+		throw new Error('Story text cannot be empty');
+	}
+
+	const states: TStateNode[] = [];
+	const movements: TMovement[] = [];
+	
+	try {
+		// First, get the initial state before any action happens
+		const initialStateSchema = z.object({
+			initialState: z.string().describe('Detailed description of the world state at the beginning of the story'),
+			firstAction: z.string().describe('Description of the first action or event that changes the world state')
+		});
+
+		const initialStatePrompt = `
+		Read the following story text and identify the initial state of the world BEFORE any action happens.
+		
+		Describe in as much detail as possible the state of the world and characters at the beginning of the story, including:
+		- Setting/environment description
+		- Character positions and situations
+		- Important objects and their states
+		- Atmosphere and time period
+		- Any other relevant details
+
+		Then, identify the first significant action or event that changes the state of the world.
+		
+		Characters in this story: ${characters.map((c) => c.name).join(', ')}
+		
+		Story Text:
+		${storyText}
+		`;
+
+		const initialStateResult = await generate_structured(initialStatePrompt, initialStateSchema);
+
+		// Create the initial state node
+		const initialState: TStateNode = {
+			id: uuidv4(),
+			worldstate: initialStateResult.initialState,
+		};
+
+		states.push(initialState);
+		
+		// Start the iterative process with the first action
+		let previousState = initialState;
+		let previousAction = initialStateResult.firstAction;
+		let continueProcessing = true;
+		
+		while (continueProcessing) {
+			const nextStateSchema = z.object({
+				resultingState: z.string().describe('Detailed description of the world state after the previous action/event'),
+				nextAction: z.string().describe('Description of the next action/event in the story that changes the world state'),
+				hasMoreActions: z.boolean().describe('Whether there are more significant actions in the story')
+			});
+			
+			const nextStatePrompt = `
+			Continue analyzing the following story. Based on the current state of the world:
+			"${previousState.worldstate}"
+			
+			And after this action occurs:
+			"${previousAction}"
+			
+			Provide:
+			1. A detailed description of the new state of the world after this action
+			2. The next significant action or event that changes the state of the world (if any)
+			3. Whether there are more significant actions in the story after this one
+			
+			Focus on concrete changes to the physical world, character situations, or relationships.
+			
+			Characters in this story: ${characters.map((c) => c.name).join(', ')}
+			
+			Story Text:
+			${storyText}
+			`;
+			
+			const stateResult = await generate_structured(nextStatePrompt, nextStateSchema);
+			
+			// Create the new state node
+			const newState: TStateNode = {
+				id: uuidv4(),
+				worldstate: stateResult.resultingState,
+			};
+			
+			states.push(newState);
+			
+			// Create the movement connecting the states
+			const movement: TMovement = {
+				id: uuidv4(),
+				source: previousState,
+				destination: newState,
+				action: previousAction,
+				dependencies: [], // Would need more complex analysis to populate
+				submovements: null, // Could be populated with nested movements in a future enhancement
+			};
+			
+			movements.push(movement);
+			
+			// Update for next iteration
+			previousState = newState;
+			previousAction = stateResult.nextAction;
+			
+			// Check if we should continue
+			continueProcessing = stateResult.hasMoreActions;
+		}
+
+		return { states, movements };
+	} catch (error) {
+		console.error('Error parsing states and movements from story:', error);
+		throw new Error(
+			`Failed to parse states and movements: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
+}
+
+/**
+ * Parses a story text to extract characters, states, movements and returns a TStory object
+ * @param storyText The story text to parse
+ * @returns A complete TStory object
+ */
+export async function parseStory(storyText: string): Promise<TStory> {
 	const chunks = chunkStory(storyText);
 	const characters = await parseCharacters(chunks);
+	const { states, movements } = await parseStatesAndMovements(storyText, characters);
 
 	return {
 		cast: characters,
-		// Other story elements would be added by other parser functions
+		world: [], // Could be populated in future enhancements
+		states: states,
+		movements: movements,
 	};
 }
