@@ -1,22 +1,16 @@
-interface TextData {
-	content: string;
-	reducedContent: string;
-	generatingContext: string;
-}
-
 type TWorldObject = TCharacter | TWorldStateData;
 
 interface TWorldStateData {
 	id: string;
 	name: string;
-	content: TextData;
 	dependencies: TWorldObject[];
 }
 
-interface Story {
+interface TStory {
 	cast: TCharacter[];
 	world: TWorldStateData[];
-	movement: TStoryMovement;
+	states: TStateNode[];
+	movements: TMovement[];
 }
 
 interface TCharacterRelation extends TRelation<TCharacter> {
@@ -32,38 +26,22 @@ interface TRelation<T extends TWorldObject> {
 interface TCharacter {
 	id: string;
 	name: string;
-	biography: TextData;
+	biography: string;
 	relations: TCharacterRelation[];
 }
 
-interface TLeafStoryMovement {
-	characters: TCharacter[];
-	setting: TextData;
-	mechanics: TextData;
-}
-
-interface TCompositeStoryMovement {
-	children: TStoryMovement[];
-}
-
-type TStoryMovement = {
+interface TStateNode {
 	id: string;
-	content: TextData;
-} & (
-	| ({
-			type: 'leaf';
-	  } & TLeafStoryMovement)
-	| ({
-			type: 'composite';
-	  } & TCompositeStoryMovement)
-);
+	worldstate: string;
+}
 
-export type {
-	Story,
-	TCharacter,
-	TLeafStoryMovement,
-	TCompositeStoryMovement,
-	TStoryMovement,
-	TWorldStateData,
-	TWorldObject,
-};
+interface TMovement {
+	id: string;
+	source: TStateNode;
+	destination: TStateNode;
+	action: string;
+	dependencies: TWorldObject[];
+	submovements: TMovement[] | null;
+}
+
+export type { TStory, TCharacter, TStateNode, TWorldStateData, TWorldObject, TMovement };

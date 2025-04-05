@@ -45,8 +45,8 @@ interface ForceGraphProps {
 }
 
 // Default node size constants
-const DEFAULT_NODE_WIDTH = 60;
-const DEFAULT_NODE_HEIGHT = 60;
+const DEFAULT_NODE_WIDTH = 50;
+const DEFAULT_NODE_HEIGHT = 50;
 
 // Custom hook for graph simulation
 function useGraphSimulation(nodes: Node[], links: Link[], width: number, height: number) {
@@ -56,13 +56,69 @@ function useGraphSimulation(nodes: Node[], links: Link[], width: number, height:
 		null,
 	);
 
+	// Keep track of node positions across renders
+	const nodePositionsRef = useRef<Map<string, { x: number; y: number; vx: number; vy: number }>>(new Map());
+
 	// Process nodes and links
 	useEffect(() => {
-		// Deep copy nodes to avoid mutating props
+		// Create a copy of nodes with preserved positions for existing nodes
+		const nodesWithPositions = nodes.map((node) => {
+			const savedPosition = nodePositionsRef.current.get(node.id);
+			if (savedPosition) {
+				// Preserve position and velocity of existing nodes
+				return {
+					...node,
+					x: savedPosition.x,
+					y: savedPosition.y,
+					vx: savedPosition.vx,
+					vy: savedPosition.vy,
+				};
+			}
+
+			// For new nodes, try to position them strategically near connected nodes
+			// Find if this node is connected to any existing node with a known position
+			const connectedNodes = links.filter((link) => link.source === node.id || link.target === node.id);
+
+			for (const link of connectedNodes) {
+				const connectedId = link.source === node.id ? link.target : link.source;
+				const connectedPosition = nodePositionsRef.current.get(connectedId);
+
+				if (connectedPosition) {
+					// Position new node near its connection with a slight offset
+					const angle = Math.random() * 2 * Math.PI;
+					const distance = 100 + Math.random() * 50; // Position 100-150px away
+
+					const newX = connectedPosition.x + Math.cos(angle) * distance;
+					const newY = connectedPosition.y + Math.sin(angle) * distance;
+
+					return {
+						...node,
+						x: newX,
+						y: newY,
+						vx: 0,
+						vy: 0,
+						// Initially fix position to prevent chaotic movement
+						fx: newX,
+						fy: newY,
+					};
+				}
+			}
+
+			// No connections found with known positions, use a random position
+			return {
+				...node,
+				x: Math.random() * width,
+				y: Math.random() * height,
+				vx: 0,
+				vy: 0,
+				fx: null,
+				fy: null,
+			};
+		});
 
 		// Convert string IDs to node references for links
 		const nodeMap = new Map<string, Node>();
-		nodes.forEach((node) => {
+		nodesWithPositions.forEach((node) => {
 			nodeMap.set(node.id, node);
 		});
 
@@ -72,7 +128,7 @@ function useGraphSimulation(nodes: Node[], links: Link[], width: number, height:
 			target: nodeMap.get(link.target) || link.target,
 		}));
 
-		setGraphNodes(nodes);
+		setGraphNodes(nodesWithPositions);
 		setGraphLinks(linksCopy as (Link & d3Force.SimulationLinkDatum<Node>)[]);
 
 		// Create a collision force that accounts for node dimensions
@@ -80,40 +136,105 @@ function useGraphSimulation(nodes: Node[], links: Link[], width: number, height:
 			return Math.max(DEFAULT_NODE_WIDTH, DEFAULT_NODE_HEIGHT) / 2;
 		};
 
-		// Create the simulation
-		const sim = d3Force
-			.forceSimulation<Node>(nodes)
-			.force(
+		// Check if we should update or create a new simulation
+		const shouldCreateNewSimulation = !simulation;
+
+		let sim = simulation;
+
+		if (shouldCreateNewSimulation) {
+			// Create a new simulation if none exists
+			sim = d3Force
+				.forceSimulation<Node>(nodesWithPositions)
+				// Higher initial alpha for longer simulation runtime
+				.alpha(10.0)
+				// Slower alphaDecay for more gradual cooling
+				.alphaDecay(0.02)
+				.force(
+					'link',
+					d3Force
+						.forceLink<Node, d3Force.SimulationLinkDatum<Node>>(linksCopy)
+						.id((d) => d.id)
+						.distance(150), // Increased to accommodate node sizes
+				)
+				.force('charge', d3Force.forceManyBody().strength(-300)) // Stronger repulsion
+				.force('center', d3Force.forceCenter(width / 2, height / 2))
+				.force('collision', d3Force.forceCollide<Node>().radius(getNodeRadius).strength(0.8));
+		} else {
+			// Update existing simulation with new nodes and links
+			sim!.nodes(nodesWithPositions);
+			sim!.force(
 				'link',
 				d3Force
-					.forceLink<Node, d3Force.SimulationLinkDatum<Node>>(linksCopy)
-					.id((d) => d.id)
-					.distance(150), // Increased to accommodate node sizes
-			)
-			.force('charge', d3Force.forceManyBody().strength(-400)) // Stronger repulsion
-			.force('center', d3Force.forceCenter(width / 2, height / 2))
-			.force('collision', d3Force.forceCollide<Node>().radius(getNodeRadius).strength(0.8))
-			.on('tick', () => {
-				// Cancel any existing animation frame to avoid duplicate updates
-				if (window._forceGraphAnimationFrame) {
-					cancelAnimationFrame(window._forceGraphAnimationFrame);
-				}
+					.forceLink(linksCopy)
+					.id((d: any) => d.id)
+					.distance(150),
+			);
 
-				// Use requestAnimationFrame to throttle state updates
-				window._forceGraphAnimationFrame = requestAnimationFrame(() => {
-					setGraphNodes([...nodes]);
-					setGraphLinks([...linksCopy] as (Link & d3Force.SimulationLinkDatum<Node>)[]);
+			// Identify which nodes are new
+			const newNodes = nodesWithPositions.filter((node) => !nodePositionsRef.current.has(node.id));
+			const newNodeCount = newNodes.length;
+
+			if (newNodeCount > 0) {
+				// More heat when new nodes are added
+				sim!.alpha(0.5).alphaDecay(0.02).restart();
+
+				// Release fixed positions of new nodes after a short delay
+				setTimeout(() => {
+					newNodes.forEach((node) => {
+						if (node.fx !== null && node.fy !== null) {
+							node.fx = null;
+							node.fy = null;
+						}
+					});
+
+					// Restart with a lower alpha to settle gently
+					sim!.alpha(0.3).restart();
+				}, 1500);
+			} else {
+				// Just a gentle restart for existing nodes
+				sim!.alpha(0.1).restart();
+			}
+		}
+
+		// Set up or update tick handler
+		sim!.on('tick', () => {
+			// Cancel any existing animation frame to avoid duplicate updates
+			if (window._forceGraphAnimationFrame) {
+				cancelAnimationFrame(window._forceGraphAnimationFrame);
+			}
+
+			// Use requestAnimationFrame to throttle state updates
+			window._forceGraphAnimationFrame = requestAnimationFrame(() => {
+				// Update node positions ref with current positions
+				nodesWithPositions.forEach((node) => {
+					if (node.x !== undefined && node.y !== undefined) {
+						nodePositionsRef.current.set(node.id, {
+							x: node.x,
+							y: node.y,
+							vx: node.vx || 0,
+							vy: node.vy || 0,
+						});
+					}
 				});
+
+				setGraphNodes([...nodesWithPositions]);
+				setGraphLinks([...linksCopy] as (Link & d3Force.SimulationLinkDatum<Node>)[]);
 			});
-		setSimulation(sim);
+		});
+
+		if (shouldCreateNewSimulation) {
+			setSimulation(sim);
+		}
 
 		return () => {
-			sim.stop();
+			if (sim) {
+				sim.stop();
+			}
 			if (window._forceGraphAnimationFrame) {
 				cancelAnimationFrame(window._forceGraphAnimationFrame);
 			}
 		};
-	}, [nodes, links, width, height]);
+	}, [nodes, links, width, height, simulation]);
 
 	return { graphNodes, graphLinks, simulation };
 }
@@ -279,8 +400,10 @@ const ForceGraph: React.FC<ForceGraphProps> = ({
 		() =>
 			inputNodes.map((node) => ({
 				...node,
-				x: 0,
-				y: 0,
+				// Don't set specific initial positions - let the simulation handle this
+				// and preserve positions when existing nodes are updated
+				x: undefined as any,
+				y: undefined as any,
 				vx: 0,
 				vy: 0,
 				fx: null,
@@ -449,7 +572,7 @@ const ForceGraph: React.FC<ForceGraphProps> = ({
 					key={`marker-${index}`}
 					id={`arrowhead-${index}`}
 					viewBox="0 0 10 8"
-					refX="8"
+					refX="6"
 					refY="4"
 					markerWidth="10"
 					markerHeight="8"
@@ -466,13 +589,7 @@ const ForceGraph: React.FC<ForceGraphProps> = ({
 
 	// Set a class name on the SVG element to ensure it captures events properly
 	return (
-		<svg
-			ref={svgRef}
-			width={width}
-			height={height}
-			style={{ border: '1px solid #ddd', borderRadius: '4px' }}
-			className="force-graph-svg"
-		>
+		<svg ref={svgRef} width={width} height={height} className="force-graph-svg">
 			<defs>{markerDefs}</defs>
 			{/* The top-level group that will be transformed by zoom */}
 			<g className="zoom-group">

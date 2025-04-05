@@ -32,6 +32,9 @@ const Home: React.FC = () => {
 					<button onClick={() => navigate('/upload')} className="action-button">
 						Upload Story
 					</button>
+					<button onClick={() => navigate('/interactive')} className="action-button">
+						Interactive Fiction
+					</button>
 				</div>
 			</div>
 		</div>

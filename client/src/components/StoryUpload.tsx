@@ -1,14 +1,14 @@
 import { useMemo, useState, useEffect } from 'react';
 import { storyService } from '../services/api';
 import '../styles/StoryViewer.css';
-import type { TStoryMovement, TCharacter } from '../../../shared/types/story';
+import type { TMovement, TCharacter } from '../../../shared/types/story';
 import StorySubmission from './StorySubmission';
 import StoryLoading from './StoryLoading';
 import { Navigate } from 'react-router-dom';
 
 export interface StoryData {
 	cast: TCharacter[];
-	movement: TStoryMovement;
+	movements: TMovement[];
 }
 
 enum StoryState {
