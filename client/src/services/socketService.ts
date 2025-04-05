@@ -3,7 +3,7 @@ import { Story, StoryNode, StoryChoice } from '../../../shared/types/interactive
 
 let socket: Socket | null = null;
 
-export const connectSocket = (userId: string): Socket => {
+const connectSocket = (userId: string): Socket => {
 	console.log('connecting socket');
 	if (!socket) {
 		socket = io('http://localhost:3001', {
@@ -63,57 +63,69 @@ export const makeChoice = (storyId: string, choiceId: string): void => {
 };
 
 // Socket event listeners - original events
+// Event listener tracking to prevent duplicates
+const activeListeners: Record<string, boolean> = {
+  'story_updated': false,
+  'choice_processing': false,
+  'choice_processed': false,
+  'choice_error': false,
+  'story_content_added': false,
+  'progress_updated': false
+};
+
+// Safe way to add event listeners that prevents duplicates
+const safeAddListener = (event: string, callback: Function): void => {
+  if (!socket) return;
+  
+  // Remove any existing listener first to prevent duplicates
+  socket.off(event);
+  
+  // Add the new listener
+  socket.on(event, callback as any);
+  activeListeners[event] = true;
+  
+  console.log(`Added listener for ${event}`);
+};
+
 export const onStoryUpdated = (callback: (data: { storyId: string; story: Story }) => void): void => {
-	if (socket) {
-		socket.on('story_updated', callback);
-	}
+  safeAddListener('story_updated', callback);
 };
 
 export const onChoiceProcessing = (callback: (data: { storyId: string; choiceId: string }) => void): void => {
-	if (socket) {
-		socket.on('choice_processing', callback);
-	}
+  safeAddListener('choice_processing', callback);
 };
 
 export const onChoiceProcessed = (
-	callback: (data: { storyId: string; choiceId: string; success: boolean }) => void,
+  callback: (data: { storyId: string; choiceId: string; success: boolean }) => void,
 ): void => {
-	if (socket) {
-		socket.on('choice_processed', callback);
-	}
+  safeAddListener('choice_processed', callback);
 };
 
 export const onChoiceError = (callback: (data: { message: string }) => void): void => {
-	if (socket) {
-		socket.on('choice_error', callback);
-	}
+  safeAddListener('choice_error', callback);
 };
 
 // New socket event listeners
 export interface StoryContentAddedData {
-	storyId: string;
-	newContent: {
-		nodes: StoryNode[];
-		choices: StoryChoice[];
-	};
+  storyId: string;
+  newContent: {
+    nodes: StoryNode[];
+    choices: StoryChoice[];
+  };
 }
 
 export const onStoryContentAdded = (callback: (data: StoryContentAddedData) => void): void => {
-	if (socket) {
-		socket.on('story_content_added', callback);
-	}
+  safeAddListener('story_content_added', callback);
 };
 
 export interface ProgressUpdatedData {
-	storyId: string;
-	userId: string;
-	nodeId: string;
+  storyId: string;
+  userId: string;
+  nodeId: string;
 }
 
 export const onProgressUpdated = (callback: (data: ProgressUpdatedData) => void): void => {
-	if (socket) {
-		socket.on('progress_updated', callback);
-	}
+  safeAddListener('progress_updated', callback);
 };
 
 // Remove event listeners
@@ -125,16 +137,24 @@ export const removeAllListeners = (): void => {
 
 export const removeStoryListeners = (): void => {
 	if (socket) {
+		// Remove all event listeners
 		socket.off('story_updated');
 		socket.off('choice_processing');
 		socket.off('choice_processed');
 		socket.off('choice_error');
 		socket.off('story_content_added');
 		socket.off('progress_updated');
+		
+		// Reset tracking
+		Object.keys(activeListeners).forEach(key => {
+			activeListeners[key as keyof typeof activeListeners] = false;
+		});
+		
+		console.log('All story listeners removed');
 	}
 };
 
-export default {
+const socketService = {
 	connectSocket,
 	disconnectSocket,
 	joinStory,
@@ -149,3 +169,5 @@ export default {
 	removeAllListeners,
 	removeStoryListeners,
 };
+
+export default socketService;

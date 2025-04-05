@@ -148,7 +148,7 @@ function useGraphSimulation(nodes: Node[], links: Link[], width: number, height:
 				// Higher initial alpha for longer simulation runtime
 				.alpha(10.0)
 				// Slower alphaDecay for more gradual cooling
-				.alphaDecay(0.02)
+				.alphaDecay(0.001)
 				.force(
 					'link',
 					d3Force
@@ -176,7 +176,7 @@ function useGraphSimulation(nodes: Node[], links: Link[], width: number, height:
 
 			if (newNodeCount > 0) {
 				// More heat when new nodes are added
-				sim!.alpha(0.5).alphaDecay(0.02).restart();
+				sim!.alpha(2).alphaDecay(0.02).restart();
 
 				// Release fixed positions of new nodes after a short delay
 				setTimeout(() => {
@@ -278,9 +278,6 @@ function useZoomPan(svgRef: React.RefObject<SVGSVGElement | null>) {
 				// Handle events based on their target
 				const target = event.target as Element;
 
-				// Get the SVG element to check if the event occurred directly on it
-				const svg = svgRef.current;
-
 				// Allow wheel events for zooming regardless of where they occur
 				if (event.type === 'wheel') return true;
 
@@ -310,6 +307,8 @@ function useNodeDrag(
 	zoomRef: React.MutableRefObject<{ x: number; y: number; k: number }>,
 ) {
 	const mouseDownTimeRef = useRef<number>(0);
+	const isDraggingRef = useRef<boolean>(false);
+	const draggedNodeRef = useRef<{ nodeId: string; fx: number; fy: number } | null>(null);
 
 	const handleDragStart = useCallback(
 		(event: React.MouseEvent, nodeId: string) => {
@@ -321,11 +320,14 @@ function useNodeDrag(
 			// Record time for distinguishing between clicks and drags
 			mouseDownTimeRef.current = Date.now();
 
+			// Flag that we're now dragging
+			isDraggingRef.current = true;
+
 			const node = graphNodes.find((n) => n.id === nodeId);
 			if (!node) return;
 
-			// Heat up the simulation when dragging starts
-			simulation.alphaTarget(0.3).restart();
+			// Heat up the simulation when dragging starts, but don't make it too high
+			simulation.alphaTarget(0.2).restart();
 
 			// Store initial node position for correct drag calculation
 			const initialNodeX = node.x!;
@@ -334,6 +336,13 @@ function useNodeDrag(
 			// Set fixed position to prevent node from moving with simulation
 			node.fx = initialNodeX;
 			node.fy = initialNodeY;
+
+			// Store the dragged node info in ref
+			draggedNodeRef.current = {
+				nodeId,
+				fx: initialNodeX,
+				fy: initialNodeY,
+			};
 
 			// Store initial mouse position
 			const startX = event.clientX;
@@ -345,16 +354,31 @@ function useNodeDrag(
 				// Stop propagation to prevent zoom/pan
 				moveEvent.stopPropagation();
 
-				// Calculate mouse displacement, adjusted for zoom scale using the ref
+				// Get the current node (it might have changed reference due to state updates)
+				const currentNode = graphNodes.find((n) => n.id === nodeId);
+				if (!currentNode) return;
+
+				// Calculate mouse displacement, adjusted for zoom scale
 				const dx = (moveEvent.clientX - startX) / zoomRef.current.k;
 				const dy = (moveEvent.clientY - startY) / zoomRef.current.k;
 
-				// Update node's fixed position based on initial position plus displacement
-				node.fx = initialNodeX + dx;
-				node.fy = initialNodeY + dy;
+				// Update fixed position
+				const newFx = initialNodeX + dx;
+				const newFy = initialNodeY + dy;
 
-				// Update the simulation
-				simulation.alpha(0.3).restart();
+				// Update the node's fixed position directly
+				currentNode.fx = newFx;
+				currentNode.fy = newFy;
+
+				// Also update our ref to maintain this position across renders
+				draggedNodeRef.current = {
+					nodeId,
+					fx: newFx,
+					fy: newFy,
+				};
+
+				// Restart simulation with low alpha
+				simulation.alpha(0.2).restart();
 			};
 
 			const handleDragEnd = () => {
@@ -362,12 +386,22 @@ function useNodeDrag(
 				document.removeEventListener('mousemove', handleDrag);
 				document.removeEventListener('mouseup', handleDragEnd);
 
-				// Let the simulation cool down
-				simulation.alphaTarget(0);
+				// Flag that we're done dragging
+				isDraggingRef.current = false;
+				draggedNodeRef.current = null;
 
-				// Optional: Unfix position when drag ends to allow node to move with simulation
-				node.fx = null;
-				node.fy = null;
+				// Find node again to get current reference
+				const currentNode = graphNodes.find((n) => n.id === nodeId);
+				if (currentNode) {
+					// Store the final position but release the fixed constraint
+					currentNode.x = currentNode.fx!;
+					currentNode.y = currentNode.fy!;
+					currentNode.fx = null;
+					currentNode.fy = null;
+				}
+
+				// Let the simulation cool down gently
+				simulation.alphaTarget(0);
 			};
 
 			// Add global event listeners to handle drag movement and release
@@ -377,12 +411,26 @@ function useNodeDrag(
 		[graphNodes, simulation, zoomRef],
 	);
 
+	// Effect to ensure dragged node position is preserved during simulation updates
+	useEffect(() => {
+		// If we're dragging, make sure the dragged node position is maintained
+		if (isDraggingRef.current && draggedNodeRef.current) {
+			const { nodeId, fx, fy } = draggedNodeRef.current;
+			const node = graphNodes.find((n) => n.id === nodeId);
+			if (node) {
+				// Restore fixed position that might have been overwritten
+				node.fx = fx;
+				node.fy = fy;
+			}
+		}
+	}, [graphNodes]);
+
 	const isRecentMouseDown = useCallback(() => {
 		// Consider it a click if less than 200ms passed between mousedown and mouseup
 		return Date.now() - mouseDownTimeRef.current < 200;
 	}, []);
 
-	return { handleDragStart, isRecentMouseDown };
+	return { handleDragStart, isRecentMouseDown, isDragging: isDraggingRef };
 }
 
 // Main ForceGraph component
@@ -417,7 +465,15 @@ const ForceGraph: React.FC<ForceGraphProps> = ({
 	// Use custom hooks
 	const { graphNodes, graphLinks, simulation } = useGraphSimulation(nodes, links, width, height);
 	const zoomRef = useZoomPan(svgRef);
-	const { handleDragStart, isRecentMouseDown } = useNodeDrag(simulation, graphNodes, zoomRef);
+	const { handleDragStart, isRecentMouseDown, isDragging } = useNodeDrag(simulation, graphNodes, zoomRef);
+
+	// Pass the isDragging ref to the simulation
+	useEffect(() => {
+		if (simulation) {
+			// @ts-ignore - Add a custom property to the simulation
+			simulation.isDraggingRef = isDragging;
+		}
+	}, [simulation, isDragging]);
 
 	// Node click handler
 	const handleNodeClick = useCallback(
@@ -473,9 +529,6 @@ const ForceGraph: React.FC<ForceGraphProps> = ({
 			// Position the start of the line at the edge of the source node
 			x1 = sourceNode.x + Math.cos(angle) * sourceRadius;
 			y1 = sourceNode.y + Math.sin(angle) * sourceRadius;
-
-			// Define arrowhead size and adjust line end point to accommodate it
-			const arrowLength = 10; // Should match the width used in marker definition
 
 			// For directional links, adjust the line ending to work with the V-shaped arrow
 			if (link.directional) {

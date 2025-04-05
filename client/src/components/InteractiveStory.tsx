@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { interactiveStoryService } from '../services/api';
 import { Story, StoryNode, StoryChoice } from '../../../shared/types/interactiveFiction';
@@ -56,74 +56,116 @@ const InteractiveStory: React.FC = () => {
 		setLoading(false);
 	}, []);
 
-	// Initialize socket connection
+	// Initialize socket connection - split into two effects to avoid reconnections
+	// First effect: Socket connection and join story
 	useEffect(() => {
 		if (user?.id && storyId) {
+			console.log('Setting up socket connection for user', user.id);
 			socketService.connectSocket(user.id);
 			socketService.joinStory(storyId);
 
-			// Set up socket event listeners
-			socketService.onStoryUpdated(({ story: updatedStory }) => {
-				setStory(updatedStory);
-				if (!currentNodeId) {
-					setCurrentNodeId(updatedStory.metadata?.currentNodeId || null);
-				}
-
-				// If this is a new node from our choice, update the current node
-				if (processingChoice) {
-					const choice = updatedStory.choices.find((c) => c.id === processingChoice);
-					if (choice) {
-						setCurrentNodeId(choice.nextNodeId);
-					}
-					setProcessingChoice(null);
-				} else if (updatedStory.metadata?.currentNodeId) {
-					// Set current node from metadata
-					setCurrentNodeId(updatedStory.metadata.currentNodeId);
-				}
-
-				setLoading(false);
-			});
-
-			// Handle new content being added
-			socketService.onStoryContentAdded(({ newContent }) => {
-				addContentToStory(newContent.nodes, newContent.choices);
-			});
-
-			// Handle progress updates
-			socketService.onProgressUpdated(({ nodeId }) => {
-				if (user.id === user.id) {
-					// Check if this update is for the current user
-					updateProgress(nodeId);
-				}
-			});
-
-			socketService.onChoiceProcessed(({ choiceId }) => {
-				if (processingChoice === choiceId) {
-					// If we have local data for this choice, navigate directly
-					if (story) {
-						const choice = story.choices.find((c) => c.id === choiceId);
-						if (choice) {
-							setCurrentNodeId(choice.nextNodeId);
-							setProcessingChoice(null);
-							setLoading(false);
-						}
-					}
-				}
-			});
-
-			socketService.onChoiceError(({ message }) => {
-				setError(message);
-				setProcessingChoice(null);
-				setLoading(false);
-			});
-
 			// Clean up socket connection on unmount
 			return () => {
+				console.log('Cleaning up socket connection');
 				socketService.leaveStory(storyId);
 				socketService.removeStoryListeners();
 			};
 		}
-	}, [user?.id, storyId, processingChoice, story, addContentToStory, updateProgress, currentNodeId]);
+	}, [user?.id, storyId]); // Only depend on user ID and story ID
+
+	// Use refs to safely access the latest state without causing dependency issues
+	const stateRef = useRef({
+		currentNodeId: null as string | null,
+		processingChoice: null as string | null,
+		story: null as Story | null,
+	});
+
+	// Update refs whenever state changes
+	useEffect(() => {
+		stateRef.current.currentNodeId = currentNodeId;
+	}, [currentNodeId]);
+
+	useEffect(() => {
+		stateRef.current.processingChoice = processingChoice;
+	}, [processingChoice]);
+
+	useEffect(() => {
+		stateRef.current.story = story;
+	}, [story]);
+
+	// First effect: Set up all socket event listeners only once
+	useEffect(() => {
+		// Only run this once when the component mounts with valid user and storyId
+		if (!user?.id || !storyId) return;
+
+		// Define handlers inside the effect to get proper closure
+		// while avoiding re-creation and dependencies issues
+
+		const handleStoryUpdated = ({ story: updatedStory }: { story: Story }) => {
+			setStory(updatedStory);
+
+			const current = stateRef.current;
+			// Only update currentNodeId if needed
+			if (!current.currentNodeId) {
+				setCurrentNodeId(updatedStory.metadata?.currentNodeId || null);
+			} else if (current.processingChoice) {
+				const choice = updatedStory.choices.find((c) => c.id === current.processingChoice);
+				if (choice) {
+					setCurrentNodeId(choice.nextNodeId);
+				}
+				setProcessingChoice(null);
+			} else if (updatedStory.metadata?.currentNodeId) {
+				setCurrentNodeId(updatedStory.metadata.currentNodeId);
+			}
+
+			setLoading(false);
+		};
+
+		const handleStoryContentAdded = ({
+			newContent,
+		}: {
+			newContent: { nodes: StoryNode[]; choices: StoryChoice[] };
+		}) => {
+			addContentToStory(newContent.nodes, newContent.choices);
+		};
+
+		const handleProgressUpdated = ({ nodeId }: { nodeId: string }) => {
+			updateProgress(nodeId);
+		};
+
+		const handleChoiceProcessed = ({ choiceId }: { choiceId: string }) => {
+			const current = stateRef.current;
+			if (current.processingChoice === choiceId && current.story) {
+				const choice = current.story.choices.find((c) => c.id === choiceId);
+				if (choice) {
+					setCurrentNodeId(choice.nextNodeId);
+					setProcessingChoice(null);
+					setLoading(false);
+				}
+			}
+		};
+
+		const handleChoiceError = ({ message }: { message: string }) => {
+			setError(message);
+			setProcessingChoice(null);
+			setLoading(false);
+		};
+
+		console.log('Setting up socket event listeners - THIS SHOULD HAPPEN ONCE');
+
+		// Add all event listeners
+		socketService.onStoryUpdated(handleStoryUpdated);
+		socketService.onStoryContentAdded(handleStoryContentAdded);
+		socketService.onProgressUpdated(handleProgressUpdated);
+		socketService.onChoiceProcessed(handleChoiceProcessed);
+		socketService.onChoiceError(handleChoiceError);
+
+		// Clean up on unmount or if user/storyId changes
+		return () => {
+			console.log('Cleaning up socket event listeners');
+			socketService.removeStoryListeners();
+		};
+	}, [user?.id, storyId, addContentToStory, updateProgress]);
 
 	// Load story data
 	useEffect(() => {
@@ -148,7 +190,7 @@ const InteractiveStory: React.FC = () => {
 		};
 
 		fetchStory();
-	}, []);
+	});
 
 	// Check if a choice already has pregenerated content
 	const hasNextState = (choiceId: string): boolean => {

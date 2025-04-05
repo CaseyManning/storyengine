@@ -77,6 +77,8 @@ export async function generateStory(storyPrompt?: string): Promise<Story> {
  * Generate a new node and choices based on a previous choice
  */
 export async function generateNextNode(story: Story, choiceId: string): Promise<Story> {
+	var startTime = new Date();
+
 	// Find the selected choice
 	const selectedChoice = story.choices.find((choice) => choice.id === choiceId);
 	if (!selectedChoice) {
@@ -138,6 +140,9 @@ export async function generateNextNode(story: Story, choiceId: string): Promise<
 		nodes: [...story.nodes, newNode],
 		choices: [...story.choices, ...newChoices],
 	};
+
+	var endTime = new Date();
+	console.log(`generateNextNode time taken: ${endTime.getTime() - startTime.getTime()}ms`);
 
 	return updatedStory;
 }

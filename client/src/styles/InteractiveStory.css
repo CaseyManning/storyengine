@@ -34,6 +34,7 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+  max-width: 350px;
 }
 
 /* Right panel - graph visualization */
@@ -134,7 +135,6 @@
 .story-description {
   font-size: 14px;
   line-height: 1.6;
-  margin-bottom: 30px;
   white-space: pre-line;
 }
 
